@@ -1,11 +1,20 @@
-import { useCallback, useRef, useState } from 'react'
-import { checkAccount, GreenApiError, sendMessage } from './api/greenApi'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  checkAccount,
+  deleteNotification,
+  extractText,
+  GreenApiError,
+  receiveNotification,
+  sendMessage,
+  type Notification,
+} from './api/greenApi'
 import { ChatWindow } from './components/ChatWindow'
 import { Login } from './components/Login'
 import { Sidebar } from './components/Sidebar'
 import type { Chat, Credentials, Message } from './types'
 
 const STORAGE_KEY = 'green-api-credentials'
+const MAX_RETRY_DELAY = 30000
 
 function loadCredentials(): Credentials | null {
   try {
@@ -55,6 +64,59 @@ export default function App() {
     })
   }, [])
 
+  const handleNotification = useCallback(
+    (body: Notification['body']) => {
+      const text = extractText(body)
+      const chatId = body.senderData?.chatId
+      if (!text || !chatId || !body.idMessage) return
+
+      const title = body.senderData?.chatName || body.senderData?.senderName || chatId
+      const timestamp = (body.timestamp ?? Date.now() / 1000) * 1000
+
+      if (body.typeWebhook === 'incomingMessageReceived') {
+        pushMessage(chatId, title, { id: body.idMessage, text, outgoing: false, timestamp })
+      } else if (body.typeWebhook === 'outgoingMessageReceived') {
+        pushMessage(chatId, title, { id: body.idMessage, text, outgoing: true, timestamp, status: 'sent' })
+      }
+    },
+    [pushMessage],
+  )
+
+  useEffect(() => {
+    if (!creds) return
+    const controller = new AbortController()
+    let stopped = false
+
+    async function loop() {
+      let delay = 1000
+      while (!stopped) {
+        try {
+          const notification = await receiveNotification(creds!, controller.signal)
+          delay = 1000
+          if (!notification) continue
+          try {
+            handleNotification(notification.body)
+          } finally {
+            // снимаем с очереди любое уведомление, иначе оно придёт снова
+            await deleteNotification(creds!, notification.receiptId)
+          }
+        } catch (err) {
+          if (stopped || controller.signal.aborted) return
+          if (err instanceof GreenApiError && err.status === 401) return logout()
+          await new Promise(r => setTimeout(r, delay))
+          delay = Math.min(delay * 2, MAX_RETRY_DELAY)
+        }
+      }
+    }
+
+    loop()
+
+    return () => {
+      stopped = true
+      controller.abort()
+    }
+  }, [creds, handleNotification, logout])
+
   async function createChat(recipient: string): Promise<string | null> {
     if (!creds) return 'Нет подключения'
     try {
@@ -94,6 +156,7 @@ export default function App() {
     pushMessage(chatId, chatId, { id: tempId, text, outgoing: true, timestamp: Date.now(), status: 'sending' })
     try {
       const { idMessage } = await sendMessage(creds, chatId, text)
+      // запоминаем id, чтобы не принять своё же сообщение вторым из уведомлений
       seenIds.current.add(idMessage)
       patchMessage({ id: idMessage, status: 'sent' })
     } catch (err) {
