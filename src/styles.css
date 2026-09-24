@@ -96,3 +96,16 @@ input, textarea { font: inherit; color: inherit; }
 .composer button:not(:disabled):hover { background: var(--blue); color: #fff; }
 .composer button:disabled { color: #aaa; cursor: default; }
 
+/* Mobile */
+@media (max-width: 760px) {
+  .app { grid-template-columns: 1fr; }
+  .app .chat { display: none; }
+  .app.has-active .sidebar { display: none; }
+  .app.has-active .chat { display: flex; }
+  .back { display: block; }
+  .bubble { max-width: 85%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
