@@ -1,0 +1,7 @@
+node_modules
+dist
+.DS_Store
+
+# Артефакт инкрементальной сборки TypeScript
+tsconfig.tsbuildinfo
+.vercel
